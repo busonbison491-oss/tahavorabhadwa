@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Flappy Bird — Custom Assets</title>
+<style>
+  html,body {
+    height:100%;
+    margin:0;
+    font-family:system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+  #game-container {
+    position:relative;
+    width: 420px; /* base width */
+    max-width:95vw;
+    aspect-ratio: 9/16; /* tall phone-like aspect */
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    border-radius:12px;
+    overflow:hidden;
+    background: linear-gradient(#74b9ff,#a29bfe);
+  }
+  canvas {
+    display:block;
+    width:100%;
+    height:100%;
+    background-repeat:no-repeat;
+    background-position:center bottom;
+    image-rendering: optimizeSpeed;
+  }
+  #ui {
+    position:absolute;
+    left:12px;
+    top:12px;
+    color:white;
+    text-shadow:0 2px 4px rgba(0,0,0,0.6);
+    font-weight:700;
+    z-index:10;
+  }
+  #score {
+    font-size:20px;
+    letter-spacing:1px;
+  }
+  #start-overlay, #game-over {
+    position:absolute;
+    inset:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    z-index:20;
+    background: linear-gradient(rgba(0,0,0,0.25), rgba(0,0,0,0.1));
+    gap:12px;
+    flex-direction:column;
+  }
+  .panel {
+    background: rgba(255,255,255,0.95);
+    padding:14px 18px;
+    border-radius:10px;
+    text-align:center;
+    box-shadow:0 6px 20px rgba(0,0,0,0.2);
+    max-width:85%;
+  }
+  button {
+    cursor:pointer;
+    border:0;
+    padding:10px 14px;
+    border-radius:8px;
+    font-weight:700;
+  }
+  #game-over img {
+    width:65%;
+    max-width:260px;
+    border-radius:8px;
+    box-shadow:0 6px 20px rgba(0,0,0,0.3);
+  }
+  #hint {
+    font-size:13px;
+    color:#222;
+  }
+  @media (min-width:800px) {
+    #game-container { width:380px; }
+  }
+</style>
+</head>
+<body>
+<div id="game-container" aria-label="Flappy game container">
+  <canvas id="game"></canvas>
+
+  <div id="ui">
+    <div id="score">Score: 0</div>
+  </div>
+
+  <div id="start-overlay">
+    <div class="panel">
+      <h2 style="margin:6px 0 8px 0">Flappy Bird (custom)</h2>
+      <div id="hint">Click / Tap / Press Space to start & flap. Keep background.</div>
+      <div style="margin-top:12px;">
+        <button id="startBtn">Start Game</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="game-over" style="display:none; flex-direction:column; padding:18px;">
+    <div class="panel" id="gameOverPanel" style="background:transparent; box-shadow:none; padding:0;">
+      <img id="lostImage" src="dead.jpg" alt="Game Over"/>
+      <div style="margin-top:10px; background:white; padding:12px; border-radius:8px;">
+        <div style="font-size:18px; font-weight:800;" id="finalScore">You scored 0</div>
+        <div style="margin-top:8px;">
+          <button id="restartBtn">Play Again</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Audio elements (expect files to be in same folder) -->
+<audio id="bgm" src="music1.mp3" loop preload="auto"></audio>
+<audio id="lostSound" src="music2.mp3" preload="auto"></audio>
+
+<script>
+/*
+ * Flappy Bird simple implementation using provided assets:
+ * - Pillar image: https://i.ibb.co/1tTT7cC0/IMG-20251118-WA0000.jpg
+ * - Bird image: https://i.ibb.co/3YWvYMsN/1000019195.jpg
+ * - Lost display image shown after loss (already placed in HTML)
+ * - Background music filenames: music1.mp3 (looped), music2.mp3 (played on loss)
+ *
+ * Notes:
+ * - Audio playback will begin on the first user interaction (click/keypress). Most browsers require a gesture to start audio.
+ * - The game is intentionally simple and robust: physics, pipe generation, collision detection, scoring, restart.
+ */
+
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d', {alpha: false});
+  const container = document.getElementById('game-container');
+
+  // assets
+  const pillarImg = new Image();
+  pillarImg.src = 'pillar.png';
+
+
+  const birdImg = new Image();
+  birdImg.src = 'taha.jpg';
+
+  
+
+  // UI elements
+  const startOverlay = document.getElementById('start-overlay');
+  const startBtn = document.getElementById('startBtn');
+  const scoreEl = document.getElementById('score');
+  const gameOverEl = document.getElementById('game-over');
+  const finalScoreEl = document.getElementById('finalScore');
+  const restartBtn = document.getElementById('restartBtn');
+
+  // audios
+  const bgm = document.getElementById('bgm');        // music1.mp3
+  const lostSound = document.getElementById('lostSound'); // music2.mp3
+
+  // Game constants (tweak if you want)
+  let scale = 1; // scaling factor (adjusted on resize)
+  const BASE_WIDTH = 288;  // internal width
+  const BASE_HEIGHT = 512; // internal height
+
+  // physics
+  const gravity = 0.6;
+  const flapStrength = -8;
+  const pipeWidth = 75; // we'll scale pipes to fit
+  const pipeGap = 150; // vertical gap (will scale)
+  const pipeInterval = 1500; // ms between pipes
+  const pipeSpeed = 2.8; // px per frame at base scale (affected by scale)
+  const birdStartX = 80;
+  const birdStartY = BASE_HEIGHT / 2;
+
+  // state
+  let lastTime = 0;
+  let accPipeTimer = 0;
+  let pipes = [];
+  let running = false;
+  let lost = false;
+  let score = 0;
+  let bird = null;
+  let started = false; // whether the player has begun (for audio/play)
+  let devicePixelRatioBack = window.devicePixelRatio || 1;
+
+  // helpers
+  function resizeCanvas() {
+    // maintain internal coordinate system of BASE_WIDTH x BASE_HEIGHT
+    const rect = container.getBoundingClientRect();
+    canvas.width = BASE_WIDTH * devicePixelRatioBack;
+    canvas.height = BASE_HEIGHT * devicePixelRatioBack;
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+    ctx.setTransform(devicePixelRatioBack, 0, 0, devicePixelRatioBack, 0, 0);
+    // compute scale relative to base width
+    scale = rect.width / BASE_WIDTH;
+  }
+
+  function resetGame() {
+    pipes = [];
+    score = 0;
+    lost = false;
+    running = true;
+    bird = {
+      x: birdStartX,
+      y: birdStartY,
+      w: 34,
+      h: 24,
+      vy: 0,
+      rotation: 0
+    };
+    accPipeTimer = 0;
+    lastTime = performance.now();
+    gameOverEl.style.display = 'none';
+    scoreEl.textContent = 'Score: 0';
+  }
+
+  // create a new pipe pair with topY = position of top of gap
+  function spawnPipe() {
+    const minGapY = 80;
+    const maxGapY = BASE_HEIGHT - 80 - pipeGap;
+    const gapY = Math.floor(Math.random() * (maxGapY - minGapY + 1)) + minGapY;
+    const pipe = {
+      x: BASE_WIDTH + 10,
+      gapY,
+      passed: false
+    };
+    pipes.push(pipe);
+  }
+
+  function playBGMIfNeeded() {
+    if (!started) {
+      // try to start the music; must be called after a user gesture
+      started = true;
+      try {
+        bgm.volume = 0.6;
+        bgm.currentTime = 0;
+        const p = bgm.play();
+        if (p && p.catch) p.catch(()=>{/* ignore autoplay block */});
+      } catch(e){}
+    }
+  }
+
+  function onFlap() {
+    if (!running) return;
+    if (!started) playBGMIfNeeded();
+    bird.vy = flapStrength;
+  }
+
+  function gameOver() {
+    running = false;
+    lost = true;
+    // stop the bgm and play lostSound
+    try {
+      bgm.pause();
+    } catch(e){}
+    try {
+      lostSound.currentTime = 0;
+      lostSound.volume = 0.9;
+      const p = lostSound.play();
+      if (p && p.catch) p.catch(()=>{/* ignore */});
+    } catch(e){}
+
+    // show overlay with final score
+    finalScoreEl.textContent = 'You scored ' + score;
+    gameOverEl.style.display = 'flex';
+  }
+
+  function rectsIntersect(ax,ay,aw,ah, bx,by,bw,bh) {
+    return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+  }
+
+  function update(dt) {
+    // dt in ms
+    if (!running) return;
+    // bird physics
+    bird.vy += gravity * (dt/16.6667); // normalized to 60fps base
+    bird.y += bird.vy * (dt/16.6667);
+    bird.rotation = Math.max(-0.8, Math.min(1.2, bird.vy / 20));
+
+    // spawn pipes
+    accPipeTimer += dt;
+    if (accPipeTimer >= pipeInterval) {
+      accPipeTimer = 0;
+      spawnPipe();
+    }
+
+    // update pipes
+    const pxSpeed = pipeSpeed * (dt/16.6667);
+    for (let i = pipes.length - 1; i >= 0; --i) {
+      const p = pipes[i];
+      p.x -= pxSpeed * 1.0;
+      // scoring: when pipe passes bird and hasn't been counted
+      if (!p.passed && p.x + pipeWidth < bird.x) {
+        p.passed = true;
+        score += 1;
+        scoreEl.textContent = 'Score: ' + score;
+      }
+      // remove off-screen pipes
+      if (p.x + pipeWidth < -50) {
+        pipes.splice(i,1);
+      }
+    }
+
+    // collisions
+    // floor/ceiling
+    if (bird.y + bird.h/2 >= BASE_HEIGHT - 8 || bird.y - bird.h/2 <= 0) {
+      bird.y = Math.min(BASE_HEIGHT - 8 - bird.h/2, Math.max(bird.h/2, bird.y));
+      gameOver();
+      return;
+    }
+
+    // pipe collisions (use rectangles near images)
+    // Calculate bird rectangle
+    const bw = bird.w;
+    const bh = bird.h;
+    const bx = bird.x - bw/2;
+    const by = bird.y - bh/2;
+
+    for (const p of pipes) {
+      const pipeX = p.x;
+      const scaledPW = pipeWidth;
+      const gapY = p.gapY;
+      // top pipe rectangle
+      const topRect = {x: pipeX, y: 0, w: scaledPW, h: gapY};
+      // bottom pipe rectangle
+      const bottomRect = {x: pipeX, y: gapY + pipeGap, w: scaledPW, h: BASE_HEIGHT - (gapY + pipeGap)};
+      if (rectsIntersect(bx,by,bw,bh, topRect.x, topRect.y, topRect.w, topRect.h) ||
+          rectsIntersect(bx,by,bw,bh, bottomRect.x, bottomRect.y, bottomRect.w, bottomRect.h)) {
+        gameOver();
+        return;
+      }
+    }
+  }
+
+  function draw() {
+    // clear with subtle background
+    ctx.fillStyle = 'rgba(102, 189, 241)';
+    ctx.fillRect(0,0,BASE_WIDTH,BASE_HEIGHT);
+
+    // draw ground strip
+    ctx.fillStyle = '#6ab44b';
+    const groundH = 8;
+    ctx.fillRect(0, BASE_HEIGHT - groundH, BASE_WIDTH, groundH);
+
+    // draw pipes (pillar image used for both top and bottom; we'll draw image scaled)
+    for (const p of pipes) {
+      const img = pillarImg;
+      const x = p.x;
+      const w = pipeWidth;
+      const gapY = p.gapY;
+      // top pipe: draw flipped vertically from top to gapY
+      // We'll scale the pillar image's height to match required height
+      if (img.complete) {
+        // top
+        const topH = gapY;
+        const sx = 0, sy = 0, sW = img.width, sH = img.height;
+        // draw top by flipping vertically: we can draw clipped portion
+        ctx.save();
+        ctx.translate(x + w/2, 0);
+        ctx.scale(1, -1);
+        // draw image so that bottom aligns with gapY when flipped
+        // approximate by drawing scaled to (w, topH)
+        ctx.drawImage(img, -w/2, -topH, w, topH);
+        ctx.restore();
+
+        // bottom pipe
+        const bottomH = BASE_HEIGHT - (gapY + pipeGap);
+        ctx.drawImage(img, x, gapY + pipeGap, w, bottomH);
+      } else {
+        // placeholder rectangles while image loads
+        ctx.fillStyle = '#2ecc71';
+        ctx.fillRect(x, 0, w, gapY);
+        ctx.fillRect(x, gapY + pipeGap, w, BASE_HEIGHT - (gapY + pipeGap));
+      }
+    }
+
+    // draw bird
+    ctx.save();
+    ctx.translate(bird.x, bird.y);
+    ctx.rotate(bird.rotation);
+    if (birdImg.complete) {
+      const bw = bird.w;
+      const bh = bird.h;
+      ctx.drawImage(birdImg, -bw/2, -bh/2, bw, bh);
+    } else {
+      ctx.fillStyle = 'orange';
+      ctx.fillRect(-10,-8,20,16);
+    }
+    ctx.restore();
+
+    // optionally draw score big in center (already in UI)
+  }
+
+  function loop(now) {
+    if (!lastTime) lastTime = now;
+    const dt = Math.min(40, now - lastTime); // cap dt for stability
+    lastTime = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // input handling
+  function onUserAction(e) {
+    // unify: click/tap or keydown for flap/start
+    if (!running) return;
+    onFlap();
+    e.preventDefault && e.preventDefault();
+  }
+
+  function onGlobalTap(e) {
+    // start game if overlay visible
+    if (!started) playBGMIfNeeded();
+    if (!running && startOverlay.style.display !== 'none') {
+      // start from overlay start button
+      // will be handled by Start button handler
+      return;
+    }
+    if (running) {
+      onFlap();
+    }
+  }
+
+  // Start button handler
+  startBtn.addEventListener('click', (ev) => {
+    // user gesture - allow audio
+    playBGMIfNeeded();
+    startOverlay.style.display = 'none';
+    resetGame();
+    // ensure we start loop if not running
+    if (!lastTime) lastTime = performance.now();
+    requestAnimationFrame(loop);
+  });
+
+  // restart handler
+  restartBtn.addEventListener('click', (ev) => {
+    // stop lostSound if playing
+    try { lostSound.pause(); } catch(e){}
+    try {
+      lostSound.currentTime = 0;
+    } catch(e){}
+    // restart background
+    try {
+      bgm.currentTime = 0;
+      bgm.play().catch(()=>{});
+    } catch(e){}
+    resetGame();
+    requestAnimationFrame(loop);
+  });
+
+  // mouse / touch
+  canvas.addEventListener('mousedown', (e) => {
+    if (!started && startOverlay.style.display !== 'none') {
+      // If overlay visible, start
+      startBtn.click();
+      return;
+    }
+    if (lost) return;
+    onFlap();
+  });
+  canvas.addEventListener('touchstart', (e) => {
+    if (!started && startOverlay.style.display !== 'none') {
+      startBtn.click();
+      return;
+    }
+    if (lost) return;
+    onFlap();
+    e.preventDefault();
+  }, {passive:false});
+
+  // keyboard
+  window.addEventListener('keydown', (e) => {
+    const code = e.code;
+    if (code === 'Space' || code === 'ArrowUp') {
+      if (!started && startOverlay.style.display !== 'none') {
+        startBtn.click();
+        e.preventDefault();
+        return;
+      }
+      if (!running) return;
+      onFlap();
+      e.preventDefault();
+    }
+  });
+
+  // ensure user gesture starts audio for mobile browsers
+  function initialUserGesture() {
+    playBGMIfNeeded();
+    // remove these listeners after first gesture
+    window.removeEventListener('click', initialUserGesture);
+    window.removeEventListener('touchstart', initialUserGesture);
+  }
+  window.addEventListener('click', initialUserGesture, {once:true});
+  window.addEventListener('touchstart', initialUserGesture, {once:true});
+
+  // handle resizing
+  window.addEventListener('resize', () => {
+    devicePixelRatioBack = window.devicePixelRatio || 1;
+    resizeCanvas();
+  });
+
+  // Initialize canvas size
+  resizeCanvas();
+
+  // Preload images and audio (basic)
+  function waitForAssetsThenShow() {
+    const promises = [];
+    [pillarImg, birdImg].forEach(img => {
+      if (!img.complete) {
+        promises.push(new Promise((res) => {
+          img.onload = img.onerror = () => { res(); };
+        }));
+      }
+    });
+    // don't block long on audio preload; browsers may not allow autoplay anyway
+    Promise.all(promises).then(()=> {
+      // show start overlay (already visible)
+    });
+  }
+  waitForAssetsThenShow();
+
+  // ensure we don't start auto-playing bgm until user gesture - browsers enforce this
+  // But once user clicks Start, we call playBGMIfNeeded()
+
+  // small accessibility: allow restart via R key when lost
+  window.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() === 'r' && lost) {
+      restartBtn.click();
+    }
+  });
+
+  // Tell user to click Start if they tap container
+  container.addEventListener('click', (e) => {
+    if (startOverlay.style.display !== 'none' && e.target === container) {
+      startBtn.click();
+    }
+  });
+
+  // Prevent context menu in game container
+  container.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // Start an idle animation loop but do not run game until startBtn pressed
+  requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
